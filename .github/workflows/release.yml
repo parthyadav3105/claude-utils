@@ -1,0 +1,72 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "statusline/**"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Build
+        working-directory: statusline
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          EXT=""
+          [ "$GOOS" = "windows" ] && EXT=".exe"
+          go build \
+            -ldflags "-s -w -X main.version=${GITHUB_SHA::8}" \
+            -trimpath \
+            -o "../dist/claudeline-${{ matrix.goos }}-${{ matrix.goarch }}${EXT}" \
+            .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: claudeline-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist/
+          merge-multiple: true
+
+      - name: Update latest release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: statusline-latest
+          name: statusline latest (${{ github.sha }})
+          prerelease: true
+          files: dist/**

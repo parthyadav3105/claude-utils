@@ -1,19 +1,36 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Installer for the /commit-message slash command.
+# Installer for the commit-message skill.
 #
 # Usage:
-#   ./install.sh                   # install to ~/.claude/commands/  (user-level)
-#   ./install.sh --project [DIR]   # install to <DIR>/.claude/commands/ (default DIR=.)
+#   ./install.sh                   # install to ~/.claude/skills/        (user-level)
+#   ./install.sh --project [DIR]   # install to <DIR>/.claude/skills/    (default DIR=.)
 #   ./install.sh --uninstall       # remove from user-level location
 #   ./install.sh --uninstall --project [DIR]
 #   ./install.sh -f | --force      # overwrite without prompting
 #   ./install.sh -h | --help
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SOURCE_FILE="$SCRIPT_DIR/commit-message.md"
-COMMAND_NAME="commit-message.md"
+SKILL_NAME="commit-message"
+RAW_BASE="https://raw.githubusercontent.com/parthyadav3105/claude-utils/main/skills/${SKILL_NAME}"
+
+# Locate SKILL.md. When run from a checkout it sits next to this script;
+# when piped via `curl ... | bash` there is no local copy, so download it.
+if [[ -n "${BASH_SOURCE[0]:-}" && -f "$(dirname "${BASH_SOURCE[0]}")/SKILL.md" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  SOURCE_FILE="$SCRIPT_DIR/SKILL.md"
+else
+  SOURCE_FILE="$(mktemp)"
+  trap 'rm -f "$SOURCE_FILE"' EXIT
+  if command -v curl &>/dev/null; then
+    curl -fsSL "$RAW_BASE/SKILL.md" -o "$SOURCE_FILE"
+  elif command -v wget &>/dev/null; then
+    wget -qO "$SOURCE_FILE" "$RAW_BASE/SKILL.md"
+  else
+    echo "curl or wget required to download SKILL.md" >&2
+    exit 1
+  fi
+fi
 
 scope="user"
 project_dir=""
@@ -43,15 +60,16 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "$scope" == "user" ]]; then
-  dest_dir="${HOME}/.claude/commands"
+  dest_dir="${HOME}/.claude/skills/${SKILL_NAME}"
 else
-  dest_dir="$(cd "$project_dir" && pwd)/.claude/commands"
+  dest_dir="$(cd "$project_dir" && pwd)/.claude/skills/${SKILL_NAME}"
 fi
-dest="$dest_dir/$COMMAND_NAME"
+dest="$dest_dir/SKILL.md"
 
 if [[ "$uninstall" -eq 1 ]]; then
   if [[ -f "$dest" ]]; then
     rm "$dest"
+    rmdir "$dest_dir" 2>/dev/null || true
     echo "Removed: $dest"
   else
     echo "Nothing to remove at: $dest"
