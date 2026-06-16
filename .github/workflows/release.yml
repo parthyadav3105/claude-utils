@@ -26,11 +26,12 @@ jobs:
             goarch: amd64
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.25"
+          cache-dependency-path: statusline/go.sum
 
       - name: Build
         working-directory: statusline
@@ -47,7 +48,7 @@ jobs:
             -o "../dist/claudeline-${{ matrix.goos }}-${{ matrix.goarch }}${EXT}" \
             .
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: claudeline-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/
@@ -58,7 +59,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           path: dist/
           merge-multiple: true
