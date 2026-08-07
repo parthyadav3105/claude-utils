@@ -13,6 +13,8 @@ set -euo pipefail
 
 SKILL_NAME="commit-message"
 RAW_BASE="https://raw.githubusercontent.com/parthyadav3105/claude-utils/main/skills/${SKILL_NAME}"
+# User-level Claude config directory (defaults to ~/.claude)
+CLAUDE_DIR="${CLAUDE_DIR:-${HOME}/.claude}"
 
 # Locate SKILL.md. When run from a checkout it sits next to this script;
 # when piped via `curl ... | bash` there is no local copy, so download it.
@@ -60,7 +62,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "$scope" == "user" ]]; then
-  dest_dir="${HOME}/.claude/skills/${SKILL_NAME}"
+  dest_dir="${CLAUDE_DIR}/skills/${SKILL_NAME}"
 else
   dest_dir="$(cd "$project_dir" && pwd)/.claude/skills/${SKILL_NAME}"
 fi

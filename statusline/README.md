@@ -8,16 +8,39 @@ A status line for [Claude Code](https://claude.ai/code) showing current director
 
 ## Install
 
+By default, `claudeline` installs into `~/.claude` (or `%USERPROFILE%\.claude` on Windows).
+
+If your Claude configuration lives somewhere else (for example `~/.claude-max`), set `CLAUDE_DIR` before running the installer.
+
 **Linux / macOS**
+
+Default install:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/parthyadav3105/claude-utils/main/statusline/install.sh | bash
 ```
 
+Custom config directory:
+
+```bash
+CLAUDE_DIR="$HOME/.claude-max" \
+  bash -c "$(curl -fsSL https://raw.githubusercontent.com/parthyadav3105/claude-utils/main/statusline/install.sh)"
+```
+
 **Windows (PowerShell)**
+
+Default install:
 
 ```powershell
 irm https://raw.githubusercontent.com/parthyadav3105/claude-utils/main/statusline/install.ps1 | iex
+```
+
+Custom config directory:
+
+```powershell
+$env:CLAUDE_DIR="$HOME\.claude-max"
+irm https://raw.githubusercontent.com/parthyadav3105/claude-utils/main/statusline/install.ps1 | iex
+Remove-Item Env:CLAUDE_DIR
 ```
 
 Restart Claude Code after installing.
@@ -36,10 +59,12 @@ Restart Claude Code after installing.
 
 ## Uninstall
 
-Remove the binary and revert `settings.json`:
+If you installed to the default location:
 
 ```bash
 rm ~/.claude/claudeline
 ```
 
-Then remove the `statusLine` entry from `~/.claude/settings.json`.
+If you installed using `CLAUDE_DIR`, remove the binary from that directory instead.
+
+Then remove the `statusLine` entry from `settings.json` in the same configuration directory.
