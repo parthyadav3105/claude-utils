@@ -3,7 +3,7 @@ set -e
 
 REPO="parthyadav3105/claude-utils"
 BINARY="claudeline"
-INSTALL_DIR="${HOME}/.claude"
+INSTALL_DIR="${CLAUDE_DIR:-${HOME}/.claude}"
 SETTINGS="${INSTALL_DIR}/settings.json"
 
 # detect OS and arch

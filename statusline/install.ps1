@@ -2,7 +2,11 @@ $ErrorActionPreference = "Stop"
 
 $Repo = "parthyadav3105/claude-utils"
 $Binary = "claudeline"
-$InstallDir = Join-Path $env:USERPROFILE ".claude"
+$InstallDir = if ($env:CLAUDE_DIR) {
+    $env:CLAUDE_DIR
+} else {
+    Join-Path $env:USERPROFILE ".claude"
+}
 $Settings = Join-Path $InstallDir "settings.json"
 
 # detect arch
