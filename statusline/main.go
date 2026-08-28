@@ -192,7 +192,11 @@ func main() {
 		line.WriteString(sep + fmt.Sprintf("%sctx: %d/%s (%d%%)%s", color, usedK, winK, pct, reset))
 	}
 
-	if in.Cost.TotalCostUSD > 0 {
+	// rate_limits is only sent for Claude.ai subscribers, so its presence means
+	// the session isn't billed per token and the cost estimate is noise.
+	onSubscription := in.RateLimits.FiveHour.ResetsAt > 0 || in.RateLimits.SevenDay.ResetsAt > 0
+
+	if !onSubscription && in.Cost.TotalCostUSD > 0 {
 		line.WriteString(dim + " · " + reset + fmt.Sprintf("$%.2f", in.Cost.TotalCostUSD))
 	}
 
