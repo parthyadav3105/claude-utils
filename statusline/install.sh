@@ -4,6 +4,11 @@ set -e
 REPO="parthyadav3105/claude-utils"
 BINARY="claudeline"
 INSTALL_DIR="${CLAUDE_DIR:-${HOME}/.claude}"
+# a quoted CLAUDE_DIR ("~/.claude-max") reaches us with a literal ~ — expand it
+case "$INSTALL_DIR" in
+  "~")   INSTALL_DIR="$HOME" ;;
+  "~/"*) INSTALL_DIR="${HOME}/${INSTALL_DIR#\~/}" ;;
+esac
 SETTINGS="${INSTALL_DIR}/settings.json"
 
 # detect OS and arch

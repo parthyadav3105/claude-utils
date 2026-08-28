@@ -15,6 +15,11 @@ SKILL_NAME="commit-message"
 RAW_BASE="https://raw.githubusercontent.com/parthyadav3105/claude-utils/main/skills/${SKILL_NAME}"
 # User-level Claude config directory (defaults to ~/.claude)
 CLAUDE_DIR="${CLAUDE_DIR:-${HOME}/.claude}"
+# a quoted CLAUDE_DIR ("~/.claude-max") reaches us with a literal ~ — expand it
+case "$CLAUDE_DIR" in
+  "~")   CLAUDE_DIR="$HOME" ;;
+  "~/"*) CLAUDE_DIR="${HOME}/${CLAUDE_DIR#\~/}" ;;
+esac
 
 # Locate SKILL.md. When run from a checkout it sits next to this script;
 # when piped via `curl ... | bash` there is no local copy, so download it.

@@ -7,6 +7,12 @@ $InstallDir = if ($env:CLAUDE_DIR) {
 } else {
     Join-Path $env:USERPROFILE ".claude"
 }
+# a CLAUDE_DIR written with a literal ~ ("~/.claude-max") is not expanded by PowerShell
+if ($InstallDir -eq "~") {
+    $InstallDir = $HOME
+} elseif ($InstallDir.StartsWith("~/") -or $InstallDir.StartsWith("~\")) {
+    $InstallDir = Join-Path $HOME $InstallDir.Substring(2)
+}
 $Settings = Join-Path $InstallDir "settings.json"
 
 # detect arch
