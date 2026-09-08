@@ -42,6 +42,29 @@ func TestFmtReset(t *testing.T) {
 	}
 }
 
+func TestFmtResetShort(t *testing.T) {
+	now := time.Now()
+	tests := []struct {
+		name string
+		unix int64
+		want string
+	}{
+		{"unset", 0, ""},
+		{"past", now.Add(-time.Hour).Unix(), ""},
+		// Days drop the hours entirely.
+		{"days only", now.Add(3*24*time.Hour + 4*time.Hour + 30*time.Second).Unix(), "3d"},
+		{"exactly one day", now.Add(24*time.Hour + 30*time.Second).Unix(), "1d"},
+		// Under a day falls back to whole hours, then to minutes.
+		{"hours under a day", now.Add(15*time.Hour + 40*time.Minute + 30*time.Second).Unix(), "15h"},
+		{"minutes under an hour", now.Add(45*time.Minute + 30*time.Second).Unix(), "45m"},
+	}
+	for _, tt := range tests {
+		if got := fmtResetShort(tt.unix); got != tt.want {
+			t.Errorf("%s: fmtResetShort = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
 func TestShortenPath(t *testing.T) {
 	t.Setenv("HOME", "/home/user")
 	tests := []struct {

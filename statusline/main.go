@@ -115,12 +115,21 @@ func gitInfo(cwd string) string {
 	return fmt.Sprintf(" (%s%s)", branch, dirty)
 }
 
-func fmtReset(unix int64) string {
+// remainingUntil reports the time left, or false if the stamp is unset or past.
+func remainingUntil(unix int64) (time.Duration, bool) {
 	if unix == 0 {
-		return ""
+		return 0, false
 	}
 	remaining := time.Until(time.Unix(unix, 0))
 	if remaining <= 0 {
+		return 0, false
+	}
+	return remaining, true
+}
+
+func fmtReset(unix int64) string {
+	remaining, ok := remainingUntil(unix)
+	if !ok {
 		return ""
 	}
 	hours := int(remaining.Hours())
@@ -129,6 +138,23 @@ func fmtReset(unix int64) string {
 		return fmt.Sprintf("%dh %dm", hours, minutes)
 	}
 	return fmt.Sprintf("%dm", minutes)
+}
+
+// fmtResetShort renders the most significant unit alone. The 7-day window is
+// coarse enough that "3d" says as much as "3d 4h", and it keeps the line short.
+func fmtResetShort(unix int64) string {
+	remaining, ok := remainingUntil(unix)
+	if !ok {
+		return ""
+	}
+	hours := int(remaining.Hours())
+	if days := hours / 24; days > 0 {
+		return fmt.Sprintf("%dd", days)
+	}
+	if hours > 0 {
+		return fmt.Sprintf("%dh", hours)
+	}
+	return fmt.Sprintf("%dm", int(remaining.Minutes()))
 }
 
 func fmtWinK(tokens int64) string {
@@ -215,6 +241,11 @@ func main() {
 			color = yellow
 		}
 		line.WriteString(dim + " · " + reset + fmt.Sprintf("%sweek: %d%%%s", color, week, reset))
+		// The 5-hour reset has its own trailing segment below, so the weekly one
+		// rides alongside its percentage rather than competing with it.
+		if resetIn := fmtResetShort(in.RateLimits.SevenDay.ResetsAt); resetIn != "" {
+			line.WriteString(dim + " (" + resetIn + ")" + reset)
+		}
 	}
 
 	if resetIn := fmtReset(in.RateLimits.FiveHour.ResetsAt); resetIn != "" {

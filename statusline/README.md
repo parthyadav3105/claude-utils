@@ -3,7 +3,7 @@
 A status line for [Claude Code](https://claude.ai/code) showing current directory, model, context usage, and rate limits.
 
 ```
-~/projects/myapp (main*) Sonnet 4.6 | ctx: 47/200k (17%) · session: 22% · week: 30% · resets in 2h 15m
+~/projects/myapp (main*) Sonnet 4.6 | ctx: 47/200k (17%) · session: 22% · week: 30% (3d) · resets in 2h 15m
 ```
 
 ## Install
@@ -54,7 +54,7 @@ Restart Claude Code after installing.
 | `Sonnet 4.6` | Current model |
 | `ctx: 47/200k (17%)` | Tokens used / context window size (turns yellow above 75%) |
 | `session: 22%` | 5-hour rate limit usage — Claude.ai subscribers only (turns yellow above 80%) |
-| `week: 30%` | 7-day rate limit usage — Claude.ai subscribers only (turns yellow above 80%) |
+| `week: 30% (3d)` | 7-day rate limit usage, with time until it resets — Claude.ai subscribers only (turns yellow above 80%) |
 | `resets in 2h 15m` | Time remaining until the 5-hour session window resets |
 
 ## Uninstall
