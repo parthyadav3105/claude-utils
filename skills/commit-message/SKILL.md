@@ -5,35 +5,23 @@ description: Suggest a commit message from this session's work. Use when the use
 
 # commit-message
 
-Draft a commit message from what you and the user did this session and show
-it. You hold the *why* — the intent, the bug, the trade-off — that the diff
-can't show. Capturing it is the whole point.
+Draft a commit message from what you and the user did this session and show it. You hold the *why* — the intent, the bug, the trade-off — that the diff can't show. Capturing it is the whole point.
 
-Before drafting, skim `git log -n 20 --pretty='%h %s'` and follow the repo's
-existing style (Conventional Commits, plain imperative, ticket prefixes,
-subject case). A style override in the arguments wins over what you infer.
+Before drafting, skim `git log -n 20 --pretty='%h %s'` and follow the repo's existing style (Conventional Commits, plain imperative, ticket prefixes, subject case). A style override in the arguments wins over what you infer.
 
 ## The seven rules of a great commit message
 
 Adapted from [cbea.ms/git-commit](https://cbea.ms/git-commit/).
 
-**1. Separate subject from body with a blank line.** The first line is the
-subject; everything after a blank line is the body. Many git tools rely on
-that blank line, so don't skip it.
+**1. Separate subject from body with a blank line.** The first line is the subject; everything after a blank line is the body. Many git tools rely on that blank line, so don't skip it.
 
-**2. Limit the subject line to 50 characters.** It's a soft target, not a
-hard rule (72 is the real ceiling). If you can't say it in 50, the commit is
-probably doing too much.
+**2. Limit the subject line to 50 characters.** It's a soft target, not a hard rule (72 is the real ceiling). If you can't say it in 50, the commit is probably doing too much.
 
-**3. Capitalize the subject line.** Write `Add CONTRIBUTING.md`, not
-`add CONTRIBUTING.md`. (Unless the repo's convention is lowercase.)
+**3. Capitalize the subject line.** Write `Add CONTRIBUTING.md`, not `add CONTRIBUTING.md`. (Unless the repo's convention is lowercase.)
 
-**4. Do not end the subject line with a period.** It's a title.
-`Fix the build`, not `Fix the build.`
+**4. Do not end the subject line with a period.** It's a title. `Fix the build`, not `Fix the build.`
 
-**5. Use the imperative mood in the subject line.** Write it as a command,
-as if giving an order. A good test: it should complete the sentence
-*"If applied, this commit will …"*
+**5. Use the imperative mood in the subject line.** Write it as a command, as if giving an order. A good test: it should complete the sentence *"If applied, this commit will …"*
 
 ```
 Good:  Refactor subsystem X for readability
@@ -46,12 +34,9 @@ Bad:   Fixed bug with Y          (past tense)
        Sweet new API methods
 ```
 
-**6. Wrap the body at 72 characters.** Git doesn't wrap text for you, so do
-it yourself so the log stays readable in a terminal.
+**6. Wrap the body at 72 characters.** Git doesn't wrap text for you, so do it yourself so the log stays readable in a terminal.
 
-**7. Use the body to explain *what* and *why*, not *how*.** The diff already
-shows how. In a few months no one will remember why — the body is where you
-tell them. Don't narrate the change:
+**7. Use the body to explain *what* and *why*, not *how*.** The diff already shows how. In a few months no one will remember why — the body is where you tell them. Don't narrate the change:
 
 ```
 Bad:   Changed foo() to take a Context and updated callers
@@ -59,8 +44,7 @@ Good:  Thread request context through foo() so slow queries
        can be attributed to the tenant that triggered them
 ```
 
-You don't always need a body — a small, obvious change is fine as a subject
-alone.
+You don't always need a body — a small, obvious change is fine as a subject alone. When you do write one, use simple words. Keep a smooth, human-readable flow throughout.
 
 ## A full example
 
