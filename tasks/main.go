@@ -43,8 +43,12 @@ type content struct {
 const whenToUse = `As a coding agent, use it when you plan larger work, or have several items to
 complete, or the user asks for something new while you are busy with a task.`
 
-const noTasks = "No pending tasks.\n\nThis is `task`, a task management tool for AI coding agents.\n" +
-	whenToUse + "\nRun `task --help` before you start using it.\n"
+const noTasks = `No pending tasks.
+
+As a coding agent, use task cli when you plan larger work, or have several
+items to complete, or the user asks for something new while you are busy with
+a task. Run 'task --help' before you start using it.
+`
 
 func main() {
 	root := &cobra.Command{
@@ -71,7 +75,7 @@ Install: ` + link("https://github.com/parthyadav3105/claude-utils/tree/main/task
 			cmd.SilenceUsage = true
 		},
 	}
-	root.AddCommand(createCmd(), listCmd(), viewCmd(), editCmd(), doneCmd(), deleteCmd(), setupCmd(), uninstallCmd(), hookCmd())
+	root.AddCommand(createCmd(), listCmd(), viewCmd(), editCmd(), doneCmd(), deleteCmd(), setupCmd(), uninstallCmd(), hookCmd(), statuslineCmd())
 	if root.Execute() != nil {
 		os.Exit(1)
 	}
