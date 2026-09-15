@@ -6,15 +6,13 @@ one at a time, so a new request from you gets recorded instead of derailing the
 work in flight.
 
 ```
-~$ task create "Fix login redirect" -l area=auth -f - <<'EOF'
-Users land on /home after login instead of the page they came from.
-EOF
+~$ task create "Fix login redirect"
 #3 created
 
 ~$ task list
-ID  NAME                AGE  WORDS  OWNER      BLOCKED BY  LABELS
-#1  Prototype new logo  2h   32     spider-man             area=brand
-#3  Fix login redirect  4s   12                            area=auth
+ID  NAME                AGE  OWNER       BLOCKED BY
+#1  Prototype new logo  2h   spider-man
+#3  Fix login redirect  4s
 ```
 
 `task` knows nothing about any particular agent. The only agent-specific part is
@@ -50,30 +48,29 @@ The binary has to be called `task`: the Claude Code hook runs it by that name.
 ## Usage
 
 ```
-task create NAME [-l KEY=VALUE]... [-b ID]... [-f FILE|-]
-task list   [-A] [-l SELECTOR] [--global] [--limit N]
-task view   ID
-task edit   ID [--name NAME] [--set-owner OWNER] [-l KEY=VALUE|KEY-]... [-b ID|ID-]... [-f FILE|-]
+task create NAME [-b ID]...
+task list   [-A] [--global] [--limit N]
+task edit   ID [--name NAME] [--set-owner OWNER] [-b ID|ID-]...
 task done   ID...
 task delete ID...
 ```
 
 | Command | Does |
 |---|---|
-| `create` | Adds a task. `-f -` reads the body from stdin; `-b` names tasks that must be done first |
-| `list` | Open tasks. `-A` adds done ones, `-l area=auth` filters by label, `--global` shows every project |
-| `view` | One task, with its body |
-| `edit` | Changes only what you pass. `KEY-` removes a label, `ID-` removes a blocker |
+| `create` | Adds a task. `-b` names tasks that must be done first |
+| `list` | Open tasks. `-A` adds done ones, `--global` shows every project |
+| `edit` | Changes only what you pass. `ID-` removes a blocker |
 | `done` | Marks tasks finished |
 | `delete` | Removes tasks. Their IDs are never reused |
 
 A few rules keep it predictable for an agent:
 
-- **A task is referred to as `#ID`**, so one task's body can point at another.
-  On the command line, type the bare number (`task view 3`): an unquoted `#3`
-  starts a shell comment.
-- **`WORDS`** is the length of the body, so an agent can judge the cost of
-  `task view` before running it.
+- **A task is a reminder, not a record.** It has a name and no description or
+  labels, so the agent spends its effort on the work instead of on the list.
+- **A name is at most 80 characters.** A longer one is rejected, not cut, so the
+  agent rewrites it.
+- **A task is referred to as `#ID`.** On the command line, type the bare number
+  (`task done 3`): an unquoted `#3` starts a shell comment.
 - **An owner is a name.** Before starting a task, an agent claims it with
   `task edit ID --set-owner NAME`, using the name other agents reach it by.
 - **Several agents can run `task` at once.** Two creates never get the same ID.
@@ -100,30 +97,61 @@ Tasks are stored per user, outside your projects, so they never show up in
 task setup claude-code
 ```
 
-This changes three things in `~/.claude/settings.json` (or
-`$CLAUDE_CONFIG_DIR`), leaving everything else in it as it was:
+By default this uses `~/.claude`. If your Claude configuration lives somewhere
+else (for example `~/.claude-max`, or a profile), set `CLAUDE_DIR`:
 
-- a `UserPromptSubmit` hook that runs `task hook claude-code`;
+```bash
+CLAUDE_DIR="$HOME/.claude-max" task setup claude-code
+```
+
+Run it once for each Claude directory you use. It changes three things in
+`$CLAUDE_DIR/settings.json`, leaving everything else in it as it was:
+
+- `UserPromptSubmit` and `SessionStart` hooks that run `task hook claude-code`;
 - a permission rule, `Bash(task:*)`, so the agent can run `task` without asking;
 - the status line, so you can see the top open tasks too (see below). On
   Windows the status line is left as it is, because the wrapper needs `sh`.
 
-On every message you send, including one sent while the agent is working, the
-hook adds this to the agent's context:
+The hook adds this to the agent's context:
 
 ```
 You are spider-man. Use this name as OWNER in task.
-ID  NAME                AGE  WORDS  OWNER       BLOCKED BY  LABELS
-#1  Prototype new logo  2h   32     spider-man              area=brand
+ID  NAME                AGE  OWNER       BLOCKED BY
+#1  Prototype new logo  2h   spider-man
 ```
 
 - **Who the agent is.** The name is the Claude Code session name: the one other
   sessions use to message it.
-- **What is on the list.** Five tasks at most, so the cost per message stays
+- **What is on the list.** Five tasks at most, so each copy stays
   small. With no tasks, it prints a short note on when to use `task` instead.
 - **Renames are followed.** When a session is renamed, by `/rename` or
   automatically, tasks owned under its old name move to the new one at its next
   message.
+
+### When the list is added
+
+Every injected list stays in the conversation, so repeating it on every message
+only piles up copies. The hook adds it when a session starts, resumes, is
+cleared or is compacted, and on a message you send when:
+
+- **you send it while the agent is working**, the moment a new request could
+  derail the current task;
+- **the open tasks changed** since the list was last added, by any agent;
+- **the context grew by 40k tokens** since then, so the last copy is far back.
+
+Otherwise the message goes through with nothing added. The hook remembers what
+it last added per session in your user cache folder (`task/sessions`), and
+deletes those notes after a week.
+
+Knowing whether the agent is working, and how big the context is, comes from
+Claude Code's transcript file. Its format is not documented. If the token counts
+in it cannot be read, the hook uses the file's growth instead, adding the list
+again after about 1 MB. That is rough, since tool output makes some transcripts
+far bigger than their context, but it still brings the list back.
+
+Settings from an older `task setup` have only the `UserPromptSubmit` hook. The
+hook adds the `SessionStart` entry itself, on the next message, in that same
+settings file.
 
 ### Status line
 
@@ -179,4 +207,4 @@ Windows: `.\install.ps1 -Uninstall`
 
 This removes the Claude Code hook and permission, restores your status line, then
 removes the binary. Your tasks are kept. To remove only the Claude Code integration, run
-`task uninstall claude-code`.
+`task uninstall claude-code`, with the same `CLAUDE_DIR` you set it up with.

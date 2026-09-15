@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -23,22 +21,16 @@ import (
 )
 
 type Task struct {
-	ID        int               `json:"-"`
-	Name      string            `json:"name"`
-	Labels    map[string]string `json:"labels"`
-	Owner     string            `json:"owner"`
-	BlockedBy []int             `json:"blocked_by"`
-	Created   time.Time         `json:"created"`
-	Done      time.Time         `json:"done"`
-	Body      string            `json:"body"`
-	Project   string            `json:"-"`
+	ID        int       `json:"-"`
+	Name      string    `json:"name"`
+	Owner     string    `json:"owner"`
+	BlockedBy []int     `json:"blocked_by"`
+	Created   time.Time `json:"created"`
+	Done      time.Time `json:"done"`
+	Project   string    `json:"-"`
 }
 
-type content struct {
-	labels    []string
-	blockedBy []string
-	file      string
-}
+const maxNameLength = 80
 
 const whenToUse = `As a coding agent, use it when you plan larger work, or have several items to
 complete, or the user asks for something new while you are busy with a task.`
@@ -56,6 +48,9 @@ func main() {
 		Long: "Task Management Tool for AI Coding Agent\n\n" + whenToUse + `
 
 Each larger piece of work becomes a task that you pull and finish one at a time.
+A task is a reminder that work exists, not a record of it: the name says what is
+left to do, and the details stay in the conversation.
+
 Create a task with 'task create'. Work only on tasks you created or that the
 user asks you to do, and before you start working on a task, claim it with
 'task edit ID --set-owner OWNER', where OWNER is the name other agents use to
@@ -66,24 +61,23 @@ and does not create tasks of its own.
 When a task has to wait for other tasks, pass their IDs to 'task create -b' or
 'task edit -b'. Do not start a task while 'task list' shows it as blocked.
 
-Read a task with 'task view', change it with 'task edit', and finish it with
-'task done'. To link tasks, refer to one as #ID in another task's description.
-In commands, type the ID as a bare number, as in 'task view 12'.
+Change a task with 'task edit', and finish it with 'task done'. In commands, type
+the ID as a bare number, as in 'task done 12'.
 
 Install: ` + link("https://github.com/parthyadav3105/claude-utils/tree/main/tasks", "github.com/parthyadav3105/claude-utils/tasks"),
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			cmd.SilenceUsage = true
 		},
 	}
-	root.AddCommand(createCmd(), listCmd(), viewCmd(), editCmd(), doneCmd(), deleteCmd(), setupCmd(), uninstallCmd(), hookCmd(), statuslineCmd())
+	root.AddCommand(createCmd(), listCmd(), editCmd(), doneCmd(), deleteCmd(), setupCmd(), uninstallCmd(), hookCmd(), statuslineCmd())
 	if root.Execute() != nil {
 		os.Exit(1)
 	}
 }
 
 func createCmd() *cobra.Command {
-	var c content
-	return c.flags(&cobra.Command{
+	var blockedBy []string
+	cmd := &cobra.Command{
 		Use:   "create NAME",
 		Short: "Create a task",
 		Args:  cobra.ExactArgs(1),
@@ -92,11 +86,11 @@ func createCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := singleLine("NAME", args[0]); err != nil {
+			if err := validName(args[0]); err != nil {
 				return err
 			}
 			t := Task{Name: args[0], Created: time.Now()}
-			if err := c.apply(dir, &t); err != nil {
+			if err := applyBlockers(dir, &t, blockedBy); err != nil {
 				return err
 			}
 			if err := create(dir, &t); err != nil {
@@ -105,32 +99,33 @@ func createCmd() *cobra.Command {
 			fmt.Printf("#%d created\n", t.ID)
 			return nil
 		},
-	})
+	}
+	cmd.Flags().StringSliceVarP(&blockedBy, "blocked-by", "b", nil, "IDs of tasks that must be done first, repeated or comma-separated")
+	cmd.RegisterFlagCompletionFunc("blocked-by", completeIDs)
+	return cmd
 }
 
 func editCmd() *cobra.Command {
-	var c content
+	var blockedBy []string
 	var name, owner string
 	cmd := &cobra.Command{
 		Use:   "edit ID",
-		Short: "Change a task's name, owner, labels, blockers or body",
+		Short: "Change a task's name, owner or blockers",
 		Example: `  task edit 12 --set-owner reviewer
   task edit 12 --name "Fix login redirect"
-  task edit 12 -l priority=high -l wip-
-  task edit 12 -b 4 -b 3-
-  task edit 12 -f - < notes.md`,
+  task edit 12 -b 4 -b 3-`,
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeID,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if cmd.Flags().NFlag() == 0 {
-				return errors.New("nothing to change: pass --name, --set-owner, -l, -b or -f")
+				return errors.New("nothing to change: pass --name, --set-owner or -b")
 			}
 			dir, t, err := find(args[0])
 			if err != nil {
 				return err
 			}
 			if cmd.Flags().Changed("name") {
-				if err := singleLine("NAME", name); err != nil {
+				if err := validName(name); err != nil {
 					return err
 				}
 				t.Name = name
@@ -141,7 +136,7 @@ func editCmd() *cobra.Command {
 				}
 				t.Owner = owner
 			}
-			if err := c.apply(dir, &t); err != nil {
+			if err := applyBlockers(dir, &t, blockedBy); err != nil {
 				return err
 			}
 			if err := save(dir, t); err != nil {
@@ -153,43 +148,14 @@ func editCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&name, "name", "", "replace the name")
 	cmd.Flags().StringVar(&owner, "set-owner", "", "replace the owner, or clear it with ''")
-	cmd.Flags().StringSliceVarP(&c.labels, "label", "l", nil, "add or change a label as KEY=VALUE, or remove one as KEY-, repeated or comma-separated")
-	cmd.Flags().StringSliceVarP(&c.blockedBy, "blocked-by", "b", nil, "add a blocker as ID, or remove one as ID-, repeated or comma-separated")
-	cmd.Flags().StringVarP(&c.file, "file", "f", "", "replace the body with FILE, or with stdin when -")
-	cmd.RegisterFlagCompletionFunc("label", completeLabels)
+	cmd.Flags().StringSliceVarP(&blockedBy, "blocked-by", "b", nil, "add a blocker as ID, or remove one as ID-, repeated or comma-separated")
 	cmd.RegisterFlagCompletionFunc("blocked-by", completeIDs)
 	return cmd
 }
 
-func (c *content) flags(cmd *cobra.Command) *cobra.Command {
-	cmd.Flags().StringSliceVarP(&c.labels, "label", "l", nil, "label as KEY=VALUE, repeated or comma-separated")
-	cmd.Flags().StringSliceVarP(&c.blockedBy, "blocked-by", "b", nil, "IDs of tasks that must be done first, repeated or comma-separated")
-	cmd.Flags().StringVarP(&c.file, "file", "f", "", "read the body from FILE, or from stdin with -")
-	cmd.RegisterFlagCompletionFunc("label", completeLabels)
-	cmd.RegisterFlagCompletionFunc("blocked-by", completeIDs)
-	return cmd
-}
-
-func (c *content) apply(dir string, t *Task) error {
-	if t.Labels == nil {
-		t.Labels = map[string]string{}
-	}
-	for _, l := range c.labels {
-		if k, remove := removal(l); remove {
-			if _, ok := t.Labels[k]; !ok {
-				return fmt.Errorf("no label %q to remove", k)
-			}
-			delete(t.Labels, k)
-			continue
-		}
-		k, v, err := pair(l, "=")
-		if err != nil {
-			return err
-		}
-		t.Labels[k] = v
-	}
-	for _, b := range c.blockedBy {
-		s, remove := removal(b)
+func applyBlockers(dir string, t *Task, blockedBy []string) error {
+	for _, b := range blockedBy {
+		s, remove := strings.CutSuffix(b, "-")
 		id, err := parseID(s)
 		if err != nil {
 			return err
@@ -202,67 +168,62 @@ func (c *content) apply(dir string, t *Task) error {
 			t.BlockedBy = slices.Delete(t.BlockedBy, i, i+1)
 			continue
 		}
+		if id == t.ID {
+			return fmt.Errorf("#%d cannot be blocked by itself", id)
+		}
 		if _, err := load(dir, id); err != nil {
 			return err
+		}
+		if t.ID != 0 && waitsOn(dir, id, t.ID) {
+			return fmt.Errorf("#%d already waits on #%d, so #%d cannot wait on #%d", id, t.ID, t.ID, id)
 		}
 		if !slices.Contains(t.BlockedBy, id) {
 			t.BlockedBy = append(t.BlockedBy, id)
 		}
 	}
-	if c.file == "" {
-		return nil
-	}
-	var body []byte
-	var err error
-	if c.file == "-" {
-		body, err = io.ReadAll(os.Stdin)
-	} else {
-		body, err = os.ReadFile(c.file)
-	}
-	t.Body = string(body)
-	return err
+	return nil
 }
 
-func removal(s string) (string, bool) {
-	if strings.Contains(s, "=") {
-		return s, false
+func waitsOn(dir string, from, target int) bool {
+	tasks, _ := loadAll(dir)
+	blockedBy := map[int][]int{}
+	for _, t := range tasks {
+		blockedBy[t.ID] = t.BlockedBy
 	}
-	return strings.CutSuffix(s, "-")
+	seen := map[int]bool{}
+	pending := []int{from}
+	for len(pending) > 0 {
+		id := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		if id == target {
+			return true
+		}
+		if !seen[id] {
+			seen[id] = true
+			pending = append(pending, blockedBy[id]...)
+		}
+	}
+	return false
 }
 
 func listCmd() *cobra.Command {
 	var all, global bool
-	var selectors []string
 	var limit int
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List open tasks",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return showList(global, all, selectors, limit)
+			return showList(global, all, limit)
 		},
 	}
 	cmd.Flags().BoolVarP(&all, "all", "A", false, "include done tasks")
 	cmd.Flags().BoolVar(&global, "global", false, "list tasks from every project")
 	cmd.Flags().IntVar(&limit, "limit", 0, "show at most N tasks")
-	cmd.Flags().StringSliceVarP(&selectors, "selector", "l", nil, "filter by key=value or key!=value, comma-separated")
-	cmd.RegisterFlagCompletionFunc("selector", completeLabels)
 	return cmd
 }
 
-func showList(global, all bool, selectors []string, limit int) error {
-	var excluded []func(Task) bool
-	for _, s := range selectors {
-		op := "="
-		if strings.Contains(s, "!=") {
-			op = "!="
-		}
-		k, v, err := pair(s, op)
-		if err != nil {
-			return err
-		}
-		excluded = append(excluded, func(t Task) bool { return (t.Labels[k] == v) != (op == "=") })
-	}
+func showList(global, all bool, limit int) error {
 	dir, err := project()
 	if err != nil {
 		return err
@@ -281,11 +242,10 @@ func showList(global, all bool, selectors []string, limit int) error {
 		}
 		open := openIDs(tasks)
 		for _, t := range tasks {
-			if !all && !open[t.ID] || slices.ContainsFunc(excluded, func(exclude func(Task) bool) bool { return exclude(t) }) {
+			if !all && !open[t.ID] {
 				continue
 			}
-			row := fmt.Sprintf("#%d\t%s\t%s\t%d\t%s\t%s\t%s", t.ID, t.Name, ago(t.Created), len(strings.Fields(t.Body)),
-				t.Owner, blockers(t, open), labelList(t.Labels, ","))
+			row := fmt.Sprintf("#%d\t%s\t%s\t%s\t%s", t.ID, t.Name, ago(t.Created), t.Owner, blockers(t, open))
 			if all {
 				row += "\t"
 				if !t.Done.IsZero() {
@@ -308,7 +268,7 @@ func showList(global, all bool, selectors []string, limit int) error {
 		rows = rows[:limit]
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	header := "ID\tNAME\tAGE\tWORDS\tOWNER\tBLOCKED BY\tLABELS"
+	header := "ID\tNAME\tAGE\tOWNER\tBLOCKED BY"
 	if all {
 		header += "\tDONE"
 	}
@@ -326,33 +286,6 @@ func showList(global, all bool, selectors []string, limit int) error {
 		fmt.Printf("... and %d more. Run 'task list' to see all.\n", more)
 	}
 	return nil
-}
-
-func viewCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:               "view ID",
-		Short:             "Show a task and its body",
-		Args:              cobra.ExactArgs(1),
-		ValidArgsFunction: completeID,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			dir, t, err := find(args[0])
-			if err != nil {
-				return err
-			}
-			tasks, err := loadAll(dir)
-			if err != nil {
-				return err
-			}
-			done := "-"
-			if !t.Done.IsZero() {
-				done = stamp(t.Done)
-			}
-			fmt.Printf("ID:         #%d\nName:       %s\nOwner:      %s\nBlocked by: %s\nLabels:     %s\nCreated:    %s\nDone:       %s\n\n%s",
-				t.ID, t.Name, cmp.Or(t.Owner, "-"), cmp.Or(blockers(t, openIDs(tasks)), "-"),
-				cmp.Or(labelList(t.Labels, "\n            "), "-"), stamp(t.Created), done, t.Body)
-			return nil
-		},
-	}
 }
 
 func doneCmd() *cobra.Command {
@@ -542,8 +475,21 @@ func find(arg string) (string, Task, error) {
 }
 
 func singleLine(what, s string) error {
-	if strings.TrimSpace(s) == "" || strings.ContainsFunc(s, unicode.IsControl) {
+	if strings.TrimSpace(s) == "" {
+		return fmt.Errorf("%s is empty", what)
+	}
+	if strings.ContainsFunc(s, unicode.IsControl) {
 		return fmt.Errorf("%s must be a single line of text", what)
+	}
+	return nil
+}
+
+func validName(name string) error {
+	if err := singleLine("NAME", name); err != nil {
+		return err
+	}
+	if n := utf8.RuneCountInString(name); n > maxNameLength {
+		return fmt.Errorf("NAME is %d characters; keep it to %d: say what is left to do, not how", n, maxNameLength)
 	}
 	return nil
 }
@@ -554,18 +500,6 @@ func parseID(s string) (int, error) {
 		return 0, fmt.Errorf("invalid ID %q: give a number like 12 or '#12'", s)
 	}
 	return id, nil
-}
-
-func pair(s, op string) (string, string, error) {
-	k, v, ok := strings.Cut(s, op)
-	if !ok || !validLabelPart(k) || !validLabelPart(v) {
-		return "", "", fmt.Errorf("invalid label %q: write key%svalue, with no '=', ',' or whitespace in either", s, op)
-	}
-	return k, v, nil
-}
-
-func validLabelPart(s string) bool {
-	return s != "" && !strings.ContainsAny(s, "=,") && !strings.ContainsFunc(s, unicode.IsSpace)
 }
 
 func link(url, text string) string {
@@ -593,14 +527,6 @@ func blockers(t Task, open map[int]bool) string {
 	return strings.Join(ids, ",")
 }
 
-func labelList(labels map[string]string, sep string) string {
-	var pairs []string
-	for _, k := range slices.Sorted(maps.Keys(labels)) {
-		pairs = append(pairs, k+"="+labels[k])
-	}
-	return strings.Join(pairs, sep)
-}
-
 func ago(t time.Time) string {
 	d := time.Since(t)
 	switch {
@@ -612,10 +538,6 @@ func ago(t time.Time) string {
 		return fmt.Sprintf("%dh", int(d.Hours()))
 	}
 	return fmt.Sprintf("%dd", int(d.Hours()/24))
-}
-
-func stamp(t time.Time) string {
-	return fmt.Sprintf("%s (%s ago)", t.Local().Format("2006-01-02 15:04"), ago(t))
 }
 
 func path(dir string, id int) string {
@@ -711,15 +633,4 @@ func completeIDs(cmd *cobra.Command, args []string, toComplete string) ([]string
 		ids = append(ids, fmt.Sprintf("%d\t%s", t.ID, t.Name))
 	}
 	return ids, cobra.ShellCompDirectiveNoFileComp
-}
-
-func completeLabels(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	var pairs []string
-	for _, t := range current() {
-		for k, v := range t.Labels {
-			pairs = append(pairs, k+"="+v)
-		}
-	}
-	slices.Sort(pairs)
-	return slices.Compact(pairs), cobra.ShellCompDirectiveNoFileComp
 }

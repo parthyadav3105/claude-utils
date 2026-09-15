@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"cmp"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,6 +30,14 @@ const statuslineCommand = "task statusline claude-code"
 
 const allowRule = "Bash(task:*)"
 
+var hookEvents = []string{"UserPromptSubmit", "SessionStart"}
+
+const reinjectAfterTokens = 40_000
+
+const reinjectAfterTranscriptBytes = reinjectAfterTokens * 25
+
+const transcriptTailBytes = 256 << 10
+
 type claudeSession struct {
 	Name        string `json:"name"`
 	FormerNames []struct {
@@ -46,22 +55,19 @@ func setupCmd() *cobra.Command {
 			if _, err := exec.LookPath("task"); err != nil {
 				return errors.New("task is not on your PATH, and the Claude Code hook runs it by name")
 			}
-			file, err := editSettings(func(settings map[string]any) error {
+			dir := installDir()
+			file, err := editSettings(dir, func(settings map[string]any) error {
 				statusLine, _ := settings["statusLine"].(map[string]any)
 				command, _ := statusLine["command"].(string)
 				if runtime.GOOS != "windows" && !strings.Contains(command, statuslineCommand) {
-					if err := errors.Join(os.MkdirAll(claudeDir(), 0o755), os.WriteFile(statusLineFile(), []byte(command), 0o644)); err != nil {
+					if err := errors.Join(os.MkdirAll(dir, 0o755), os.WriteFile(statusLineFile(dir), []byte(command), 0o644)); err != nil {
 						return err
 					}
 					statusLine = object(settings, "statusLine")
 					statusLine["type"] = "command"
 					statusLine["command"] = statuslineCommand
 				}
-				hooks := object(settings, "hooks")
-				if !slices.ContainsFunc(array(hooks, "UserPromptSubmit"), hasOurs) {
-					hooks["UserPromptSubmit"] = append(array(hooks, "UserPromptSubmit"),
-						map[string]any{"hooks": []any{map[string]any{"type": "command", "command": hookCommand}}})
-				}
+				wireHooks(settings)
 				permissions := object(settings, "permissions")
 				if !slices.Contains(array(permissions, "allow"), any(allowRule)) {
 					permissions["allow"] = append(array(permissions, "allow"), allowRule)
@@ -71,7 +77,7 @@ func setupCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Printf("Updated %s:\n  UserPromptSubmit hook: %s\n  allowed: %s\n", file, hookCommand, allowRule)
+			fmt.Printf("Updated %s:\n  %s hooks: %s\n  allowed: %s\n", file, strings.Join(hookEvents, " and "), hookCommand, allowRule)
 			if runtime.GOOS == "windows" {
 				fmt.Println("  status line: left unchanged, as it needs sh")
 			} else {
@@ -89,10 +95,11 @@ func uninstallCmd() *cobra.Command {
 		Args:      cobra.MatchAll(cobra.ExactArgs(1), cobra.OnlyValidArgs),
 		ValidArgs: []string{"claude-code"},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			file, err := editSettings(func(settings map[string]any) error {
+			dir := installDir()
+			file, err := editSettings(dir, func(settings map[string]any) error {
 				if statusLine, _ := settings["statusLine"].(map[string]any); statusLine != nil {
 					if command, _ := statusLine["command"].(string); strings.Contains(command, statuslineCommand) {
-						original, err := os.ReadFile(statusLineFile())
+						original, err := os.ReadFile(statusLineFile(dir))
 						switch {
 						case err != nil && !errors.Is(err, os.ErrNotExist):
 							return err
@@ -104,24 +111,28 @@ func uninstallCmd() *cobra.Command {
 					}
 				}
 				hooks := object(settings, "hooks")
-				hooks["UserPromptSubmit"] = slices.DeleteFunc(array(hooks, "UserPromptSubmit"), func(group any) bool {
-					if !hasOurs(group) {
-						return false
-					}
-					g := group.(map[string]any)
-					g["hooks"] = slices.DeleteFunc(array(g, "hooks"), ours)
-					return len(array(g, "hooks")) == 0
-				})
+				for _, event := range hookEvents {
+					hooks[event] = slices.DeleteFunc(array(hooks, event), func(group any) bool {
+						if !hasOurs(group) {
+							return false
+						}
+						g := group.(map[string]any)
+						g["hooks"] = slices.DeleteFunc(array(g, "hooks"), ours)
+						return len(array(g, "hooks")) == 0
+					})
+				}
 				permissions := object(settings, "permissions")
 				permissions["allow"] = slices.DeleteFunc(array(permissions, "allow"), func(rule any) bool { return rule == allowRule })
-				prune(settings, "hooks", "UserPromptSubmit")
+				for _, event := range hookEvents {
+					prune(settings, "hooks", event)
+				}
 				prune(settings, "permissions", "allow")
 				return nil
 			})
 			if err != nil {
 				return err
 			}
-			if err := os.Remove(statusLineFile()); err != nil && !errors.Is(err, os.ErrNotExist) {
+			if err := os.Remove(statusLineFile(dir)); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return err
 			}
 			fmt.Printf("Removed the task hook, status line and %s from %s\n", allowRule, file)
@@ -144,7 +155,7 @@ func statuslineCmd() *cobra.Command {
 				return
 			}
 			input, _ := io.ReadAll(os.Stdin)
-			if original, err := os.ReadFile(statusLineFile()); err == nil && len(original) > 0 {
+			if original, err := os.ReadFile(statusLineFile(claudeDir())); err == nil && len(original) > 0 {
 				run := exec.Command("sh", "-c", string(original))
 				run.Env = append(os.Environ(), "TASK_STATUSLINE=1")
 				run.Stdin = bytes.NewReader(input)
@@ -275,8 +286,8 @@ func paint(code, text string) string {
 	return "\033[" + code + "m" + text + "\033[0m"
 }
 
-func statusLineFile() string {
-	return filepath.Join(claudeDir(), "task-statusline")
+func statusLineFile(dir string) string {
+	return filepath.Join(dir, "task-statusline")
 }
 
 func hookCmd() *cobra.Command {
@@ -286,15 +297,170 @@ func hookCmd() *cobra.Command {
 		Args:      cobra.MatchAll(cobra.ExactArgs(1), cobra.OnlyValidArgs),
 		ValidArgs: []string{"claude-code"},
 		Run: func(cmd *cobra.Command, args []string) {
+			var in hookInput
+			json.NewDecoder(os.Stdin).Decode(&in)
+			if in.Event == "UserPromptSubmit" {
+				upgradeWiring()
+			}
 			me, err := readSession(filepath.Join(claudeDir(), "sessions", os.Getenv("CLAUDE_PID")+".json"))
 			if err == nil && me.Name != "" {
 				followRenames(me)
+			}
+			hash := ""
+			if dir, err := project(); err == nil {
+				tasks, _ := loadAll(dir)
+				hash = listHash(tasks)
+			}
+			now := readConversation(in.TranscriptPath)
+			stateFile := injectionFile(in.SessionID)
+			last := loadInjection(stateFile)
+			if !shouldInject(in.Event, last, hash, now) {
+				if now.contextTokens > 0 && (last.ContextTokens == 0 || now.contextTokens < last.ContextTokens) {
+					last.ContextTokens = now.contextTokens
+					saveInjection(stateFile, *last)
+				}
+				return
+			}
+			if me.Name != "" {
 				fmt.Printf("You are %s. Use this name as OWNER in task.\n", me.Name)
 			}
-			if err := showList(false, false, nil, 5); err != nil {
+			if err := showList(false, false, 5); err != nil {
 				fmt.Fprintln(os.Stderr, "Error:", err)
 			}
+			saveInjection(stateFile, injection{ListHash: hash, ContextTokens: now.contextTokens, TranscriptBytes: now.transcriptBytes})
 		},
+	}
+}
+
+type hookInput struct {
+	Event          string `json:"hook_event_name"`
+	SessionID      string `json:"session_id"`
+	TranscriptPath string `json:"transcript_path"`
+}
+
+type injection struct {
+	ListHash        string `json:"list_hash"`
+	ContextTokens   int    `json:"context_tokens"`
+	TranscriptBytes int64  `json:"transcript_bytes"`
+}
+
+type conversation struct {
+	contextTokens   int
+	transcriptBytes int64
+	midTurn         bool
+}
+
+func shouldInject(event string, last *injection, listHash string, now conversation) bool {
+	switch {
+	case event == "SessionStart", last == nil, now.midTurn, listHash != last.ListHash:
+		return true
+	}
+	if last.ContextTokens > 0 && now.contextTokens > 0 {
+		return now.contextTokens-last.ContextTokens >= reinjectAfterTokens
+	}
+	return now.transcriptBytes-last.TranscriptBytes >= reinjectAfterTranscriptBytes
+}
+
+func listHash(tasks []Task) string {
+	open := openIDs(tasks)
+	h := sha256.New()
+	for _, t := range tasks {
+		if open[t.ID] {
+			fmt.Fprintf(h, "%d\x00%s\x00%s\x00%v\n", t.ID, t.Name, t.Owner, t.BlockedBy)
+		}
+	}
+	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+// Reads Claude Code's transcript, which is not a documented format: when its records cannot be
+// read, the context size stays 0 and the turn counts as idle, so the hook falls back to the file's
+// growth in bytes, a rough stand-in for context growth.
+func readConversation(transcript string) conversation {
+	var c conversation
+	f, err := os.Open(transcript)
+	if err != nil {
+		return c
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return c
+	}
+	c.transcriptBytes = info.Size()
+	offset := max(0, info.Size()-transcriptTailBytes)
+	data, err := io.ReadAll(io.NewSectionReader(f, offset, info.Size()-offset))
+	if err != nil {
+		return c
+	}
+	lines := strings.Split(string(data), "\n")
+	if offset > 0 {
+		lines = lines[1:]
+	}
+	for _, line := range lines {
+		var record struct {
+			Type    string `json:"type"`
+			Message struct {
+				Content json.RawMessage `json:"content"`
+				Usage   *struct {
+					InputTokens              int `json:"input_tokens"`
+					CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+					CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+				} `json:"usage"`
+			} `json:"message"`
+		}
+		if json.Unmarshal([]byte(line), &record) != nil || record.Type != "user" && record.Type != "assistant" {
+			continue
+		}
+		if u := record.Message.Usage; record.Type == "assistant" && u != nil {
+			c.contextTokens = u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
+		}
+		var blocks []struct {
+			Type string `json:"type"`
+		}
+		json.Unmarshal(record.Message.Content, &blocks)
+		c.midTurn = len(blocks) > 0 && (blocks[0].Type == "tool_use" || blocks[0].Type == "tool_result")
+	}
+	return c
+}
+
+func injectionFile(sessionID string) string {
+	cache, err := os.UserCacheDir()
+	if sessionID == "" || err != nil {
+		return ""
+	}
+	return filepath.Join(cache, "task", "sessions", filepath.Base(sessionID)+".json")
+}
+
+func loadInjection(file string) *injection {
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return nil
+	}
+	var last injection
+	if json.Unmarshal(data, &last) != nil {
+		return nil
+	}
+	return &last
+}
+
+func saveInjection(file string, state injection) {
+	if file == "" {
+		return
+	}
+	dir := filepath.Dir(file)
+	if os.MkdirAll(dir, 0o755) != nil {
+		return
+	}
+	data, _ := json.Marshal(state)
+	tmp := fmt.Sprintf("%s.%d", file, os.Getpid())
+	if os.WriteFile(tmp, data, 0o644) == nil {
+		os.Rename(tmp, file)
+	}
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if info, err := e.Info(); err == nil && time.Since(info.ModTime()) > 7*24*time.Hour {
+			os.Remove(filepath.Join(dir, e.Name()))
+		}
 	}
 }
 
@@ -340,11 +506,24 @@ func readSession(file string) (claudeSession, error) {
 }
 
 func claudeDir() string {
-	return cmp.Or(os.Getenv("CLAUDE_CONFIG_DIR"), filepath.Join(home(), ".claude"))
+	return expandHome(cmp.Or(os.Getenv("CLAUDE_CONFIG_DIR"), filepath.Join(home(), ".claude")))
 }
 
-func editSettings(edit func(settings map[string]any) error) (string, error) {
-	file := filepath.Join(claudeDir(), "settings.json")
+// Setup and uninstall take CLAUDE_DIR first, like the other claude-utils installers. The hook and
+// status line must not: at run time only CLAUDE_CONFIG_DIR says which profile Claude is using.
+func installDir() string {
+	return expandHome(cmp.Or(os.Getenv("CLAUDE_DIR"), os.Getenv("CLAUDE_CONFIG_DIR"), filepath.Join(home(), ".claude")))
+}
+
+func expandHome(dir string) string {
+	if dir == "~" || strings.HasPrefix(dir, "~/") || strings.HasPrefix(dir, `~\`) {
+		return filepath.Join(home(), dir[1:])
+	}
+	return dir
+}
+
+func editSettings(dir string, edit func(settings map[string]any) error) (string, error) {
+	file := filepath.Join(dir, "settings.json")
 	settings := map[string]any{}
 	data, err := os.ReadFile(file)
 	if err == nil {
@@ -369,7 +548,19 @@ func editSettings(edit func(settings map[string]any) error) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
 		return "", err
 	}
-	return file, os.WriteFile(file, out.Bytes(), 0o644)
+	target := file
+	if resolved, err := filepath.EvalSymlinks(file); err == nil {
+		target = resolved
+	}
+	mode := os.FileMode(0o644)
+	if info, err := os.Stat(target); err == nil {
+		mode = info.Mode().Perm()
+	}
+	tmp := fmt.Sprintf("%s.%d", target, os.Getpid())
+	if err := os.WriteFile(tmp, out.Bytes(), mode); err != nil {
+		return "", err
+	}
+	return file, os.Rename(tmp, target)
 }
 
 func object(parent map[string]any, key string) map[string]any {
@@ -404,4 +595,37 @@ func ours(hook any) bool {
 func hasOurs(group any) bool {
 	g, _ := group.(map[string]any)
 	return slices.ContainsFunc(array(g, "hooks"), ours)
+}
+
+func wireHooks(settings map[string]any) {
+	hooks := object(settings, "hooks")
+	for _, event := range hookEvents {
+		if !slices.ContainsFunc(array(hooks, event), hasOurs) {
+			hooks[event] = append(array(hooks, event),
+				map[string]any{"hooks": []any{map[string]any{"type": "command", "command": hookCommand}}})
+		}
+	}
+}
+
+func upgradeWiring() {
+	dir := claudeDir()
+	data, err := os.ReadFile(filepath.Join(dir, "settings.json"))
+	if err != nil {
+		return
+	}
+	var settings map[string]any
+	if json.Unmarshal(data, &settings) != nil {
+		return
+	}
+	hooks, _ := settings["hooks"].(map[string]any)
+	if !slices.ContainsFunc(array(hooks, "UserPromptSubmit"), hasOurs) {
+		return
+	}
+	if !slices.ContainsFunc(hookEvents, func(event string) bool { return !slices.ContainsFunc(array(hooks, event), hasOurs) }) {
+		return
+	}
+	editSettings(dir, func(settings map[string]any) error {
+		wireHooks(settings)
+		return nil
+	})
 }
