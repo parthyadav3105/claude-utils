@@ -257,9 +257,11 @@ func strike(s string) string {
 	return b.String()
 }
 
+const statusNameLength = 48
+
 func shorten(name string) string {
-	if runes := []rune(name); len(runes) > 32 {
-		return string(runes[:31]) + "…"
+	if runes := []rune(name); len(runes) > statusNameLength {
+		return string(runes[:statusNameLength-1]) + "…"
 	}
 	return name
 }

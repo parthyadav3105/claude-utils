@@ -58,7 +58,7 @@ task delete ID...
 | Command | Does |
 |---|---|
 | `create` | Adds a task. `-b` names tasks that must be done first |
-| `list` | Open tasks. `-A` adds done ones, `--global` shows every project |
+| `list`, `ls` | Open tasks. `-A` adds done ones, `--global` shows every project |
 | `edit` | Changes only what you pass. `ID-` removes a blocker |
 | `done` | Marks tasks finished |
 | `delete` | Removes tasks. Their IDs are never reused |
@@ -170,7 +170,7 @@ Tasks · 2 open · 1 waiting
 ```
 
 The header counts every open task, including ones that don't fit in the three
-rows. Names longer than 32 characters end in `…`.
+rows. Names longer than 48 characters end in `…`.
 
 - **◼** is a task with an owner: `assigned to NAME`. The
   square always has the same colour for the same owner, so you can tell agents

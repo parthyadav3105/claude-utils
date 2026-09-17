@@ -6,7 +6,7 @@ A collection of utilities for [Claude Code](https://claude.ai/code).
 
 - [statusline](statusline/README.md) — Status line showing cwd, model, context usage, rate limits, and session cost.
 - [after](after/README.md) - Queue a message for a running session instead of interrupting it.
-- [tasks](tasks/README.md) — A task list for coding agents, with a hook that shows it on every prompt.
+- [tasks](tasks/README.md) — A task list for coding agents, with a hook that reminds the agent of it when it matters.
 
 ## Skills
 

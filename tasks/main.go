@@ -210,9 +210,10 @@ func listCmd() *cobra.Command {
 	var all, global bool
 	var limit int
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List open tasks",
-		Args:  cobra.NoArgs,
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List open tasks",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return showList(global, all, limit)
 		},
